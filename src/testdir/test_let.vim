@@ -865,4 +865,25 @@ END
   bw!
 endfunc
 
+" Unpacking with an index expression that changes the source List must not
+" use freed memory.  Only detects the error with ASan/valgrind.
+func Test_let_unpack_change_list()
+  func F()
+    call remove(g:src, 1, 2)
+    return 0
+  endfunc
+  let g:src = ['one', 'two', 'three']
+  let g:x = [0]
+  try
+    let [g:a, g:x[F()], g:c] = g:src
+  catch
+    " assigning the third item fails, the List was shortened
+    call assert_match('E688:', v:exception)
+  endtry
+  call assert_equal('one', g:a)
+  call assert_equal(['two'], g:x)
+  delfunc F
+  unlet! g:src g:x g:a g:c
+endfunc
+
 " vim: shiftwidth=2 sts=2 expandtab

@@ -1244,7 +1244,7 @@ ex_let_vars(
     tuple_T	*tuple = NULL;
     int		i;
     int		var_idx = 0;
-    listitem_T	*item = NULL;
+    listwatch_T	lw;
     typval_T	ltv;
     int		is_list = tv->v_type == VAR_LIST;
     int		idx;
@@ -1307,24 +1307,48 @@ ex_let_vars(
     if (is_list)
     {
 	CHECK_LIST_MATERIALIZE(l);
-	item = l->lv_first;
+	// Use a watcher to traverse the list, a target expression may change
+	// the list and invalidate item pointers.
+	list_add_watch(l, &lw);
+	lw.lw_item = l->lv_first;
     }
     else
 	idx = 0;
 
     while (*arg != ']')
     {
+	typval_T	item_tv;
+
 	arg = skipwhite(arg + 1);
 	++var_idx;
-	arg = ex_let_one(arg, is_list ? &item->li_tv : TUPLE_ITEM(tuple, idx),
-			 TRUE, flags | ASSIGN_UNPACK, (char_u *)",;]", op,
-			 var_idx);
 	if (is_list)
-	    item = item->li_next;
+	{
+	    if (lw.lw_item == NULL)
+	    {
+		emsg(_(e_more_targets_than_list_items));
+		list_rem_watch(l, &lw);
+		return FAIL;
+	    }
+	    // Make a copy of the value, assigning to the target may change
+	    // the List and free the item.
+	    copy_tv(&lw.lw_item->li_tv, &item_tv);
+	    arg = ex_let_one(arg, &item_tv, TRUE,
+			     flags | ASSIGN_UNPACK, (char_u *)",;]", op,
+			     var_idx);
+	    clear_tv(&item_tv);
+	    if (lw.lw_item != NULL)
+		lw.lw_item = lw.lw_item->li_next;
+	}
 	else
-	    idx++;
+	    arg = ex_let_one(arg, TUPLE_ITEM(tuple, idx), TRUE,
+			     flags | ASSIGN_UNPACK, (char_u *)",;]", op,
+			     var_idx);
 	if (arg == NULL)
+	{
+	    if (is_list)
+		list_rem_watch(l, &lw);
 	    return FAIL;
+	}
 
 	arg = skipwhite(arg);
 	if (*arg == ';')
@@ -1337,14 +1361,18 @@ ex_let_vars(
 		// after ';'.  Create a new list for this.
 		l = list_alloc();
 		if (l == NULL)
+		{
+		    list_rem_watch(tv->vval.v_list, &lw);
 		    return FAIL;
+		}
 
 		// list
-		while (item != NULL)
+		while (lw.lw_item != NULL)
 		{
-		    list_append_tv(l, &item->li_tv);
-		    item = item->li_next;
+		    list_append_tv(l, &lw.lw_item->li_tv);
+		    lw.lw_item = lw.lw_item->li_next;
 		}
+		list_rem_watch(tv->vval.v_list, &lw);
 
 		ltv.v_type = VAR_LIST;
 		ltv.v_lock = 0;
@@ -1390,9 +1418,14 @@ ex_let_vars(
 	else if (*arg != ',' && *arg != ']')
 	{
 	    internal_error("ex_let_vars()");
+	    if (is_list)
+		list_rem_watch(l, &lw);
 	    return FAIL;
 	}
     }
+
+    if (is_list)
+	list_rem_watch(tv->vval.v_list, &lw);
 
     return OK;
 }
