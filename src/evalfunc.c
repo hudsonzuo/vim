@@ -5261,6 +5261,8 @@ execute_cmds_from_string(char_u *str)
 /*
  * Get next line from a list.
  * Called by do_cmdline() to get the next line.
+ * Uses a watcher, so that a command removing list items does not make the
+ * item pointer invalid.
  * Returns allocated string, or NULL for end of function.
  */
     char_u *
@@ -5270,15 +5272,15 @@ get_list_line(
     int	    indent UNUSED,
     getline_opt_T options UNUSED)
 {
-    listitem_T **p = (listitem_T **)cookie;
-    listitem_T *item = *p;
+    listwatch_T *lw = (listwatch_T *)cookie;
+    listitem_T *item = lw->lw_item;
     char_u	buf[NUMBUFLEN];
     char_u	*s;
 
     if (item == NULL)
 	return NULL;
     s = tv_get_string_buf_chk(&item->li_tv, buf);
-    *p = item->li_next;
+    lw->lw_item = item->li_next;
     return s == NULL ? NULL : vim_strsave(s);
 }
 
@@ -5361,12 +5363,14 @@ execute_common(typval_T *argvars, typval_T *rettv, int arg_off)
 	do_cmdline_cmd(cmd);
     else
     {
-	listitem_T	*item;
+	listwatch_T	lw;
 
 	CHECK_LIST_MATERIALIZE(list);
-	item = list->lv_first;
-	do_cmdline(NULL, get_list_line, (void *)&item,
+	list_add_watch(list, &lw);
+	lw.lw_item = list->lv_first;
+	do_cmdline(NULL, get_list_line, (void *)&lw,
 		      DOCMD_NOWAIT|DOCMD_VERBOSE|DOCMD_REPEAT|DOCMD_KEYTYPED);
+	list_rem_watch(list, &lw);
 	--list->lv_refcount;
     }
     sticky_cmdmod_flags = save_sticky_cmdmod_flags;

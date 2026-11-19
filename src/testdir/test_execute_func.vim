@@ -50,6 +50,16 @@ func Test_execute_list()
   call assert_equal("", execute([]))
 endfunc
 
+" A command removing a later command from the List must not cause using
+" freed memory.  Only detects the error with ASan/valgrind.
+func Test_execute_list_remove_command()
+  let g:cmds = ['call remove(g:cmds, 1)', 'let g:x = 1', 'let g:y = 2']
+  call execute(g:cmds)
+  call assert_equal(2, g:y)
+  unlet g:cmds
+  call assert_false(exists('g:x'))
+endfunc
+
 func Test_execute_does_not_change_col()
   echo ''
   echon 'abcd'
